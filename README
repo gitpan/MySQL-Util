@@ -10,6 +10,7 @@ REQUIRES
     DBD::mysql
     namespace::autoclean
     Moose
+    Test::More
 
     Database:
     ---------
