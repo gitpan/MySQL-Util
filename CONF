@@ -1,0 +1,4 @@
+export MYSQL_HOST=localhost
+export MYSQL_DBNAME=mysql_util
+export DBI_USER=root
+export DBI_DSN="DBI:mysql:host=$MYSQL_HOST;"
