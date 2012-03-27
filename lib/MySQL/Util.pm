@@ -42,7 +42,7 @@ Version 0.02
 
 =cut
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 =head1 SYNOPSIS
 
@@ -50,6 +50,10 @@ our $VERSION = '0.02';
 
  my $util = MySQL::Util->new( dsn  => $ENV{DBI_DSN}, 
                               user => $ENV{DBI_USER} );
+
+ my $util = MySQL::Util->new( dsn  => $ENV{DBI_DSN}, 
+                              user => $ENV{DBI_USER},
+                              span => 1); 
 
  my $aref = $util->describe_table('mytable');
  print "table: mytable\n";
@@ -84,6 +88,13 @@ has 'pass' => (
     is       => 'ro',
     required => 0,
     default  => undef
+);
+
+has 'span' => (
+	is => 'ro',
+	isa   => 'Int',
+	required => 0,
+	default => 0
 );
 
 #
@@ -125,6 +136,13 @@ has '_describe_cache' => (
 	default  => sub { {} }
 );
 
+has '_schema' => (
+	is => 'rw',
+	isa => 'Str',
+	required => 0,
+	init_arg => undef,
+);
+
 #
 # this gets automatically invoked after the constructor
 #
@@ -140,6 +158,11 @@ sub BUILD {
             FetchHashKeyName => 'NAME_uc'
         }
     );
+	
+	my $schema = $dbh->selectrow_arrayref("select schema()")->[0];
+	if ($schema) {
+		$self->_schema($schema);
+	}
 
     $self->_set_dbh($dbh);
 }
@@ -152,9 +175,16 @@ All methods croak in the event of failure unless otherwise noted.
 
 =over 
 
-=item new(dsn => $dsn, user => $user, [pass => $pass])
+=item new( dsn  => $dsn, 
+           user => $user, 
+          [pass => $pass], 
+          [span => $span]);
 
 constructor
+ * dsn  - standard DBI stuff
+ * user - db username
+ * pass - db password
+ * span - follow references that span databases (default 0)
 
 =cut
 
@@ -184,7 +214,11 @@ sub describe_table
 {
 	my $self  = shift;
 	my $table = shift;	
-	
+
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $cache = '_describe_cache';
 
     if ( defined( $self->$cache->{$table} ) ) {
@@ -228,6 +262,10 @@ sub get_ak_constraints {
     my $self  = shift;
     my $table = shift;
 
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $href = {};
     my $cons = $self->get_constraints($table);
 
@@ -256,6 +294,10 @@ See get_indexes for a list of hash elements in each column.
 sub get_ak_indexes {
     my $self  = shift;
     my $table = shift;
+
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
 
     my $href = {};
     my $indexes = $self->get_indexes($table);
@@ -293,7 +335,13 @@ sub get_constraints {
     my $self  = shift;
     my $table = shift;
 
-    my $cache = '_constraint_cache';
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+	
+	my ($schema, $table_no_schema) = split(/\./, $table);
+    
+	my $cache = '_constraint_cache';
 
     if ( defined( $self->$cache->{$table} ) ) {
         return $self->$cache->{$table}->data;
@@ -303,19 +351,26 @@ sub get_constraints {
 	
     my $sql = qq{
 		select kcu.constraint_name, tc.constraint_type, column_name, 
-		  ordinal_position, position_in_unique_constraint,
-		  referenced_table_name, referenced_column_name 
+		  ordinal_position, position_in_unique_constraint, referenced_table_schema,
+		  referenced_table_name, referenced_column_name, tc.constraint_schema
 	    from information_schema.table_constraints tc, 
 	      information_schema.key_column_usage kcu 
-		where tc.table_name = '$table'
+		where tc.table_name = '$table_no_schema'
 		  and tc.table_name = kcu.table_name 
 		  and tc.constraint_name = kcu.constraint_name 
-		  and tc.constraint_schema = schema() 
+		  and tc.constraint_schema = '$schema'
 		  and kcu.constraint_schema = tc.constraint_schema 
-		order by constraint_name, ordinal_position
 	};
+	
+	if (!$self->span) {
+ 		$sql.= qq{
+		  and (referenced_table_schema = '$schema' or referenced_table_schema is null)
+		};
+	}
 
-    my $dbh = $self->_dbh;
+	$sql.= qq{ order by constraint_name, ordinal_position };
+	
+	my $dbh = $self->_dbh;
     my $sth = $dbh->prepare($sql);
     $sth->execute;
 
@@ -328,8 +383,8 @@ sub get_constraints {
 
         push( @{ $href->{$name} }, {%$row} );
     }
-
-    $self->$cache->{$table} = TableCache->new( data => $href );
+    
+	$self->$cache->{$table} = TableCache->new( data => $href );
     return $href;
 }
 
@@ -362,7 +417,11 @@ sub get_depth
 {
 	my $self  = shift;
 	my $table = shift;
-
+	
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+	
 	my $cache = '_depth_cache';
 		
 	if (defined($self->{$cache}->{$table})) 
@@ -371,12 +430,15 @@ sub get_depth
 	my $dbh = $self->_dbh;
 	
 	my $fk_cons = $self->get_fk_constraints($table);	
-
+	
 	my $depth = 0;	
 	
 	foreach my $fk_name (keys (%$fk_cons)) {
-		my $parent_table = $fk_cons->{$fk_name}->[0]->{REFERENCED_TABLE_NAME};
-		
+		my $parent_table = 	
+			$fk_cons->{$fk_name}->[0]->{REFERENCED_TABLE_SCHEMA} .
+			'.' .  
+			$fk_cons->{$fk_name}->[0]->{REFERENCED_TABLE_NAME};
+
 		if ($parent_table eq $table)
 			{ next }  # self referencing table
 		
@@ -408,6 +470,10 @@ sub get_fk_constraints {
     my $self  = shift;
     my $table = shift;
 
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $href = {};
     my $cons = $self->get_constraints($table);
 
@@ -437,6 +503,10 @@ See "get_indexes" for a list of the hash elements in each column.
 sub get_fk_indexes {
     my $self  = shift;
     my $table = shift;
+
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
 
     my $href = {};
     my $cons    = $self->get_fk_constraints($table);
@@ -524,6 +594,10 @@ sub get_indexes {
     my $self  = shift;
     my $table = shift;
 
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my %h = ();
     my $indexes = $self->_get_indexes_arrayref($table);
 
@@ -550,7 +624,7 @@ See "get_depth" for additional info.
 sub get_max_depth
 {
 	my $self = shift;
-	
+
 	my $dbh = $self->_dbh;
 	
 	my $tables = $self->get_tables();	
@@ -581,6 +655,10 @@ See "get_constraints" for a list of the hash elements in each column.
 sub get_other_constraints {
     my $self  = shift;
     my $table = shift;
+
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
 
     my $fk = $self->get_fk_constraints($table);
     my $ak = $self->get_ak_constraints($table);
@@ -618,6 +696,10 @@ sub get_other_indexes {
     my $self  = shift;
     my $table = shift;
 
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $ak = $self->get_ak_indexes($table);
     my $fk = $self->get_fk_indexes($table);
 
@@ -652,6 +734,10 @@ sub get_pk_constraint {
     my $self  = shift;
     my $table = shift;
 
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $cons = $self->get_constraints($table);
 
     foreach my $con_name ( keys(%$cons) ) {
@@ -680,6 +766,10 @@ sub get_pk_index {
     my $self  = shift;
     my $table = shift;
 
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $href = $self->get_indexes($table);
 
     foreach my $name ( keys(%$href) ) {
@@ -702,7 +792,7 @@ if no tables were found.
 
 sub get_tables {
 	my $self = shift;
-	
+
     my $dbh = $self->_dbh;
     
     my $tables = undef;
@@ -727,15 +817,32 @@ sub table_exists
 {
 	my $self  = shift;
 	my $table = shift;		
-	
+
+	if ($table !~ /\./) {
+		$table = $self->_schema . ".$table";
+	}
+
     my $dbh = $self->_dbh;
-	my $sth = $dbh->prepare("show tables like '$table'");
+
+	my ($schema, $table_no_schema) = split(/\./, $table);
+	if ($schema ne $self->_schema) {
+		# quietly change the schema so "show tables like ..." works
+		$dbh->do("use $schema");
+	}
+
+	my $sql = qq{show tables like '$table_no_schema'};
+	my $sth = $dbh->prepare($sql);
 	$sth->execute;
 
 	my $cnt = 0;	
 	while($sth->fetchrow_array) {
 		$cnt++;	
 	}	
+
+	if ($schema ne $self->_schema) {
+		# quietly change schema back
+		$dbh->do("use " . $self->_schema);
+	}
 	
 	return $cnt;
 }
@@ -754,6 +861,8 @@ sub use_dbh {
     my $dbname = shift;
 
     $self->_dbh->do("use $dbname");
+	$self->_schema($dbname);
+
     return 1;
 }
 
