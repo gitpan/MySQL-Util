@@ -8,7 +8,7 @@ use namespace::autoclean;
 #
 
 has 'data' => (
-    is => 'rw',
+    is       => 'rw',
     required => 1,
     default  => sub { [] }
 );
@@ -38,11 +38,11 @@ MySQL::Util - Utility functions for working with MySQL.
 
 =head1 VERSION
 
-Version 0.02
+Version 0.10
 
 =cut
 
-our $VERSION = '0.03';
+our $VERSION = '0.10';
 
 =head1 SYNOPSIS
 
@@ -64,7 +64,32 @@ our $VERSION = '0.03';
  my $href = $util->get_ak_constraints('mytable');
  my $href = $util->get_ak_indexes('mytable');
  my $href = $util->get_constraints('mytable');
- ...
+
+ #
+ # drop foreign keys example 1 
+ # 
+ 
+ my $fks_aref = $util->drop_fks();
+
+ < do some work here - perhaps truncate tables >
+
+ $util->apply_ddl($fks_aref);   # this will clear the cache for us.  see 
+                                # clear_cache() for more info.
+
+ # 
+ #  drop foreign keys example 2 
+ #
+ 
+ my $fks_aref = $util->drop_fks();
+
+ my $dbh = $util->clone_dbh;
+ foreach my $stmt (@$fks_aref) {
+     $dbh->do($stmt); 
+ }
+
+ $util->clear_cache;  # we modified the database ddl outside of the object so 
+                      # we need to clear the object's internal cache.  see 
+                      # clear_cache() for more info.
 
 =cut 
 
@@ -144,7 +169,7 @@ has '_schema' => (
 );
 
 #
-# this gets automatically invoked after the constructor
+# this gets automatically invoked sub the constructor#__AFTER
 #
 sub BUILD {
     my $self = shift;
@@ -188,6 +213,27 @@ constructor
 
 =cut
 
+
+=item apply_ddl( [ ... ]) 
+
+Runs arbitrary ddl commands passed in via an array ref.
+
+The advantage of this is it allows you to make ddl changes to the db without
+having to worry about the object's internal cache (see clear_cache()).
+
+=cut
+
+sub apply_ddl
+{
+	my $self = shift;
+	my $stmts_aref = shift;
+
+ 	foreach my $stmt (@$stmts_aref) {
+    	$self->_dbh->do($stmt);
+ 	}
+
+	$self->clear_cache;	
+}
 
 =item describe_table($table);
 
@@ -243,6 +289,82 @@ sub describe_table
 }
 
 
+=item drop_fks([$table])
+
+Drops foreign keys for a given table or the entire database if no table is 
+provided.
+
+Returns an array ref of alter table statements to rebuild the dropped foreign 
+keys on success.  Returns an empty array ref if no foreign keys were found.
+
+=cut
+
+sub drop_fks
+{
+    my $self  = shift;
+    my $table = shift;
+
+	my @tables;
+	if (!defined($table)) {
+		my $tables_aref = $self->get_tables;
+		return [] if !defined($tables_aref);
+
+		@tables = @$tables_aref;	
+	}
+	else {
+		push(@tables, $table);
+	}
+
+	my @ret;
+	foreach my $table (@tables) {
+
+		my $fqtn = $self->_schema . ".$table";
+		my $fks_href = $self->get_fk_constraints($table);
+
+		foreach my $fk (keys %$fks_href) {
+	
+			push(@ret, $self->_get_fk_ddl($table, $fk));
+	
+			my $sql = qq{
+				alter table $table
+				drop foreign key $fk
+			};
+			$self->_dbh->do($sql);
+		
+			$self->_constraint_cache->{$fqtn} = undef;
+		}		
+	}	
+
+	return [ @ret ];
+}
+
+sub _get_fk_ddl
+{
+	my $self = shift;
+	my $table = shift;
+	my $fk = shift;
+
+    my $sql = "show create table $table";
+    my $sth = $self->_dbh->prepare($sql);
+    $sth->execute;
+
+    while(my @a = $sth->fetchrow_array) {
+
+        foreach my $data (@a) {
+            my @b = split(/\n/, $data);
+
+            foreach my $item (@b) {
+                if ($item =~ /CONSTRAINT `$fk` FOREIGN KEY/) {
+					$item =~ s/^\s*//; # remove leading ws
+					$item =~ s/\s*//;  # remove trailing ws
+					$item =~ s/,$//;   # remove trailing comma
+
+					return "alter table $table add $item";
+				}
+			}
+		}
+	}	
+}
 
 =item get_ak_constraints($table)
 
@@ -322,12 +444,14 @@ $hashref->{constraint_name}->[ { col1 }, { col2 } ]
 
 Hash elements for each column:
 
+	CONSTRAINT_SCHEMA
 	CONSTRAINT_TYPE
 	COLUMN_NAME
 	ORDINAL_POSITION
 	POSITION_IN_UNIQUE_CONSTRAINT
-	REFERENCED_TABLE_NAME
 	REFERENCED_COLUMN_NAME
+	REFERENCED_TABLE_SCHEMA
+	REFERENCED_TABLE_NAME
 		
 =cut
 
@@ -453,9 +577,11 @@ sub get_depth
 }
 
 
-=item get_fk_constraints($table)
+=item get_fk_constraints([$table])
 
-Returns a hashref of the foreign key constraints for a given table.  Returns
+Returns the foreign keys for a table or the entire database.
+
+Returns a hashref of the foreign key constraints on success.  Returns
 an empty hashref if none were found.
 
 The structure of the returned data is:
@@ -470,17 +596,31 @@ sub get_fk_constraints {
     my $self  = shift;
     my $table = shift;
 
-	if ($table !~ /\./) {
+	if (defined($table) and $table !~ /\./) {
 		$table = $self->_schema . ".$table";
 	}
+	
+	my @tables;
+	if (!defined($table)) {
+		my $tables_aref = $self->get_tables;
+		return {} if !defined($tables_aref);
 
-    my $href = {};
-    my $cons = $self->get_constraints($table);
+		@tables = @$tables_aref;	
+	}
+	else {
+		push(@tables, $table);
+	}
 
-    foreach my $con ( keys(%$cons) ) {
-        if ( $cons->{$con}->[0]->{CONSTRAINT_TYPE} eq 'FOREIGN KEY' ) {
-            $href->{$con} = $cons->{$con};
-        }
+	my $href = {};
+	my @ret;
+	foreach my $table (@tables) {
+    	my $cons = $self->get_constraints($table);
+
+    	foreach my $con ( keys(%$cons) ) {
+        	if ( $cons->{$con}->[0]->{CONSTRAINT_TYPE} eq 'FOREIGN KEY' ) {
+            	$href->{$con} = $cons->{$con};
+        	}
+		}
     }
 
     return $href;
@@ -766,9 +906,9 @@ sub get_pk_index {
     my $self  = shift;
     my $table = shift;
 
-	if ($table !~ /\./) {
-		$table = $self->_schema . ".$table";
-	}
+#	if ($table !~ /\./) {
+#		$table = $self->_schema . ".$table";
+#	}
 
     my $href = $self->get_indexes($table);
 
@@ -781,7 +921,6 @@ sub get_pk_index {
 
     return [];
 }
-
 
 =item get_tables( )
 
@@ -852,8 +991,6 @@ sub table_exists
 
 Used for switching database context.  Returns true on success.
 
-=back
-
 =cut
 
 sub use_dbh {
@@ -862,13 +999,57 @@ sub use_dbh {
 
     $self->_dbh->do("use $dbname");
 	$self->_schema($dbname);
+	$self->clear_cache;
 
     return 1;
 }
 
+=back
 
-=head1 AUTHOR
+=head1 ADDITIONAL METHODS
 
+=over 
+
+=item clear_cache()
+
+Clears the object's internal cache.
+
+If you modify the database ddl without going through the object, then you need 
+to clear the internal cache so any future object calls don't return stale 
+information.
+
+=cut
+
+sub clear_cache
+{
+	my $self = shift;
+	
+	$self->_index_cache({});
+	$self->_constraint_cache({});
+	$self->_depth_cache({});
+	$self->_describe_cache({});
+}
+
+=item clone_dbh()
+
+Returns a cloned copy of the internal database handle per the DBI::clone 
+method.  Beware that the database context will be the same as the object's. 
+For example, if you called "use_dbh" and switched context along the way, the 
+returned dbh will also be in that same context.
+
+=cut
+
+sub clone_dbh {
+	my $self = shift;
+
+	my $dbh = $self->_dbh->clone;
+	$dbh->do("use " . $self->_schema);
+	return $dbh;
+}
+
+=back
+
+=head1 AUTHOR 
 John Gravatt, C<< <gravattj at cpan.org> >>
 
 =head1 BUGS

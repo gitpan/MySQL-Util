@@ -1,5 +1,9 @@
 Revision history for MySQL-Util
 
+0.10	Added drop_fks() and clear_cache()
+
+0.03    
+
 0.02    Bug fixes for automated test cases.
 
 0.01    Date/time

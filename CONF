@@ -1,4 +1,4 @@
-MYSQL_HOST=localhost
+MYSQL_HOST=127.0.0.1
 MYSQL_DBNAME=mysql_util
 DBI_USER=root
-DBI_DSN=DBI:mysql:host=localhost;
+DBI_DSN=DBI:mysql:host=127.0.0.1;
