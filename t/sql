@@ -1,13 +1,3 @@
---
--- ER/Studio Data Architect 8.5 SQL Code Generation
--- Company :      Microsoft
--- Project :      Util.dm1
--- Author :       Microsoft
---
--- Date Created : Monday, October 31, 2011 10:17:31
--- Target DBMS : MySQL 5.x
---
-
 -- 
 -- TABLE: depth_0a 
 --
@@ -17,8 +7,6 @@ CREATE TABLE depth_0a(
     PRIMARY KEY (depth_0a_id)
 )ENGINE=INNODB
 ;
-
-
 
 -- 
 -- TABLE: depth_0b 
@@ -62,7 +50,16 @@ CREATE TABLE depth_2a(
 )ENGINE=INNODB
 ;
 
-
+--
+-- TABLE: depth_3a
+--
+CREATE TABLE depth_3a(
+    depth_3a_id     INT     AUTO_INCREMENT,
+    depth_1a_id    INT    NOT NULL,
+    PRIMARY KEY (depth_3a_id),
+    FOREIGN KEY (depth_1a_id) REFERENCES depth_2a(depth_1a_id)
+)ENGINE=INNODB
+;
 
 -- 
 -- TABLE: table_a 
@@ -71,6 +68,7 @@ CREATE TABLE depth_2a(
 CREATE TABLE table_a(
     table_a_id    INT    AUTO_INCREMENT,
     name          INT,
+    tester		  varchar(20) NULL,
     PRIMARY KEY (table_a_id), 
     UNIQUE INDEX table_a_ak(name)
  )ENGINE=INNODB

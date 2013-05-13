@@ -1,26 +1,35 @@
---- #YAML:1.0
-name:               MySQL-Util
-version:            0.10
-abstract:           Utility functions for working with MySQL.
+---
+abstract: 'Utility functions for working with MySQL.'
 author:
-    - John Gravatt <gravattj@cpan.org>
-license:            perl
-distribution_type:  module
-configure_requires:
-    ExtUtils::MakeMaker:  0
+  - 'John Gravatt <gravattj@cpan.org>'
 build_requires:
-    ExtUtils::MakeMaker:  0
-requires:
-    Data::Compare:        1.22
-    DBD::mysql:           0
-    Moose:                1.24
-    namespace::autoclean:  0
-    Test::More:           0
-no_index:
-    directory:
-        - t
-        - inc
-generated_by:       ExtUtils::MakeMaker version 6.57_05
+  ExtUtils::MakeMaker: 0
+configure_requires:
+  ExtUtils::MakeMaker: 0
+dynamic_config: 1
+generated_by: 'ExtUtils::MakeMaker version 6.62, CPAN::Meta::Converter version 2.130880'
+license: perl
 meta-spec:
-    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
-    version:  1.4
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: MySQL-Util
+no_index:
+  directory:
+    - t
+    - inc
+requires:
+  Config::General: 0
+  DBD::mysql: 0
+  DBIx::DataFactory: 0
+  Data::Compare: 0
+  List::MoreUtils: 0
+  Modern::Perl: 0
+  Moose: 0
+  SQL::Beautify: 0
+  Smart::Args: 0
+  String::Util: 0
+  Symbol::Util: 0
+  Test::More: 0
+  autodie: 0
+  namespace::autoclean: 0
+version: 0.26

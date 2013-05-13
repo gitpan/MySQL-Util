@@ -1,13 +1,24 @@
+bin/myutil_create_data.pl
+bin/myutil_dump_tables.pl
+bin/myutil_dump_table_fks.pl
+bin/myutil_dump_table_constraints.pl
 Changes
-MANIFEST
-Makefile.PL
-README
+CONF
+eg/myutil_drop_test_db.pl
+eg/myutil_load_test_db.pl
+lib/MySQL/Util/Data/Cache.pm
+lib/MySQL/Util/Data/Create.pm
 lib/MySQL/Util.pm
-t/00-load.t
+Makefile.PL
+MANIFEST
+META.yml                                 Module meta-data (added by MakeMaker)
+README
+t/00-load_util.t
+t/15-cache.t
+t/20-util.t
+t/sql
 t/manifest.t
 #t/pod-coverage.t
 t/pod.t
-CONF
-t/child.sql
-t/parent.sql
-META.yml                                 Module meta-data (added by MakeMaker)
+t/testlib.pl
+META.json                                Module JSON meta-data (added by MakeMaker)
